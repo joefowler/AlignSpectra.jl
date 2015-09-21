@@ -1,1 +1,6 @@
-julia 0.3
+julia 0.4
+DynamicTimeWarp
+HDF5
+PyPlot
+Dierckx
+Optim
