@@ -5,7 +5,7 @@ using Dierckx, Optim
 
 include("MonotoneSpline.jl")
 
-export MonotoneSpline #?? Not sure what to export yet!
+export MonotoneSpline, MonotoneSplineLogLog
 
 """Find <npeaks> distinct peaks in a histogram with contents <h>.
 The algorithm is to label the fullest bin as the 1st peak, and penalize

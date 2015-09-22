@@ -20,11 +20,23 @@ function _plothermite()
     legend(loc="center right")
 end
 
+"""A callable object that acts as a monotone cubic spline, with a
+choice of behaviors at the boundaries."""
+type MonotoneSpline
+    x      ::Vector{Real}
+    y      ::Vector{Real}
+    m      ::Vector{Real}
+    dx     ::Vector{Real}
+    bc     ::String
+    function MonotoneSpline(x::Vector, y::Vector, m::Vector,
+        dx::Vector; bc="error")
+        new(x, y, m, dx, bc)
+    end
+end
+
 
 function MonotoneSpline(x::Vector, y::Vector; bc="error")
-    """
-    Return a
-    """
+
     n=length(x)
     @assert n==length(y)
 
@@ -57,73 +69,57 @@ function MonotoneSpline(x::Vector, y::Vector; bc="error")
             m[k+1] = tau*beta*secantslopes[k]
         end
     end
-
-    let x=copy(x), y=copy(y), dx=copy(dx),
-        m=copy(m)  # Local copy so closure isn't affected by later changes to x or y
-
-        function onemonospline(z::Symbol)
-            # This is a closure, but we want (for special cases) to have access to
-            # the underlying table of values from which we made the spline.
-            # This method of the function will provide that.
-            if z == :x
-                return x
-            elseif z == :y
-                return y
-            elseif z == :m
-                return m
-            end
-        end
-        function onemonospline(z::Number)
-            if z<x[1]
-                if bc=="error"
-                    throw(ArgumentError)
-                elseif bc=="constant"
-                    return y[1]
-                else
-                    return y[1]+m[1]*(z-x[1])
-                end
-            elseif z>x[end]
-                if bc=="error"
-                    throw(ArgumentError)
-                elseif bc=="constant"
-                    return y[end]
-                else
-                    return y[end]+m[end]*(z-x[end])
-                end
-            end
-
-            bin = searchsortedfirst(x, z)-1
-            if bin<1; bin=1; end
-            t = (z-x[bin])/dx[bin]
-            return (cubehermitev1(t)*y[bin] + cubehermitem1(t)*m[bin]*dx[bin] +
-            cubehermitev2(t)*y[bin+1] + cubehermitem2(t)*m[bin+1]*dx[bin])
-        end
-    end
-    @vectorize_1arg Number onemonospline
-    onemonospline
+    return MonotoneSpline(x, y, m, dx; bc=bc)
 end
 
-function splinelogspace(x::Vector, y::Vector; bc="error")
-    xp = x[x.>0]
-    yp = y[y.>0]
-    f = MonotoneSpline(log(xp), log(yp), bc=bc)
-    g(z::Number) = exp(f(log(z)))
-    @vectorize_1arg Number g
-    function g(s::Symbol)
-        if s == :x
-            return xp
-        elseif s == :y
-            return yp
+function Base.call(spl::MonotoneSpline, z::Number)
+    if z < spl.x[1]
+        if spl.bc=="error"
+            throw(ArgumentError)
+        elseif spl.bc=="constant"
+            return spl.y[1]
+        else
+            return spl.y[1]+spl.m[1]*(z-spl.x[1])
+        end
+    elseif z > spl.x[end]
+        if spl.bc=="error"
+            throw(ArgumentError)
+        elseif spl.bc=="constant"
+            return spl.y[end]
+        else
+            return spl.y[end]+spl.m[end]*(z-spl.x[end])
         end
     end
-    return g
+
+    bin = searchsortedfirst(spl.x, z)-1
+    if bin<1; bin=1; end
+    t = (z-spl.x[bin])/spl.dx[bin]
+    return (cubehermitev1(t)*spl.y[bin] + cubehermitem1(t)*spl.m[bin]*spl.dx[bin] +
+    cubehermitev2(t)*spl.y[bin+1] + cubehermitem2(t)*spl.m[bin+1]*spl.dx[bin])
 end
+Base.call(spl::MonotoneSpline, z::AbstractArray) = map(spl, z)
+
+
+"""A callable object that acts as a monotone cubic spline in log-log space,
+with a choice of behaviors at the boundaries."""
+type MonotoneSplineLogLog
+    x      ::Vector{Real}
+    y      ::Vector{Real}
+    ms     ::MonotoneSpline
+    function MonotoneSplineLogLog(x::Vector, y::Vector; bc="error")
+        ms = MonotoneSpline(log(x), log(y); bc=bc)
+        new(x, y, ms)
+    end
+end
+
+Base.call(spl::MonotoneSplineLogLog, z::Number) = exp(spl.ms(log(z)))
+Base.call(spl::MonotoneSplineLogLog, z::AbstractArray) = map(spl, z)
 
 
 function test1()
     x = collect(0:9)
     y = [0,1,3,10,10,11,12,14,14,16]
-    f = MonotoneSpline(x, y, bc="extrapolate")
+    f = MonotoneSpline(x, y; bc="extrapolate")
     f2 = Dierckx.Spline1D(float(x), float(y))
     a = linspace(-2,10,500)
     clf()
@@ -138,8 +134,8 @@ function test2()
     model(x) = 1000*((x./1000).^0.6 ) + x
     x = collect(linspace(0,8000,12))
     y = model(x)
-    f = MonotoneSpline(x, y, bc="extrapolate")
-    g = splinelogspace(x, y, bc="extrapolate")
+    f = MonotoneSpline(x, y; bc="extrapolate")
+    g = MonotoneSplineLogLog(x, y; bc="extrapolate")
     s(z) = evaluate(Dierckx.Spline1D(x, y), z)
     clf()
     a = linspace(0,8000,600)
