@@ -238,15 +238,15 @@ function one_dtw_step(data1::Vector, data2::Vector)
 end
 
 """This is still a work in progress. For now, just skip it."""
-function polish!(consensus::Vector, allknots, allcurves, data, i::Int=1)
-    d = data[i];
-    knotr, knots = allknots[i]
-    f = allcurves[i]
-    _,h2 = Base.hist(f(d), 0:0.5:8000)
+function xpolish!(consensus::Vector, knotr, knots, curve, data)
+    f = curve
+    _,h2 = Base.hist(f(data), 0:0.5:8000)
     println(knots)
-    consensus .-= h2
+    consensus = Base.hist(consensus, 0:0.5:8000)
+    consensus = consensus .- h2
+
     mu = (float(consensus)+0.1)
-    mu = mu*length(d)/sum(mu)
+    mu = mu*length(data)/sum(mu)
     logmu = log(mu)
     summu = sum(mu)
     clf(); plot(consensus, "k", label="Consensus")
@@ -258,7 +258,7 @@ function polish!(consensus::Vector, allknots, allcurves, data, i::Int=1)
         for (ik,k) = enumerate(kchoices)
             trial = copy(knots)
             trial[knum]=k
-            f = splinelogspace(knotr, trial, bc="extrapolate")
+            f = MonotoneSplineLogLog(knotr, trial, bc="extrapolate")
             d2 = f(d)
             _,ccc=Base.hist(d2, 0:0.5:8000)
             loglike =  -summu
@@ -272,7 +272,7 @@ function polish!(consensus::Vector, allknots, allcurves, data, i::Int=1)
         @show knum, best_s-knots[knum]
         knots[knum] = best_s
     end
-    f = splinelogspace(knotr, knots, bc="extrapolate")
+    f = MonotoneSplineLogLog(knotr, knots, bc="extrapolate")
     println(knots)
     _,h3 = Base.hist(f(d), 0:0.5:8000)
     plot(h3, "r", label="After polish")
