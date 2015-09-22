@@ -21,7 +21,7 @@ function _plothermite()
 end
 
 
-function monotonespline(x::Vector, y::Vector; bc="error")
+function MonotoneSpline(x::Vector, y::Vector; bc="error")
     """
     Return a
     """
@@ -60,7 +60,20 @@ function monotonespline(x::Vector, y::Vector; bc="error")
 
     let x=copy(x), y=copy(y), dx=copy(dx),
         m=copy(m)  # Local copy so closure isn't affected by later changes to x or y
-        function thisspline(z)
+
+        function onemonospline(z::Symbol)
+            # This is a closure, but we want (for special cases) to have access to
+            # the underlying table of values from which we made the spline.
+            # This method of the function will provide that.
+            if z == :x
+                return x
+            elseif z == :y
+                return y
+            elseif z == :m
+                return m
+            end
+        end
+        function onemonospline(z::Number)
             if z<x[1]
                 if bc=="error"
                     throw(ArgumentError)
@@ -86,14 +99,24 @@ function monotonespline(x::Vector, y::Vector; bc="error")
             cubehermitev2(t)*y[bin+1] + cubehermitem2(t)*m[bin+1]*dx[bin])
         end
     end
-    @vectorize_1arg Number thisspline
-    thisspline
+    @vectorize_1arg Number onemonospline
+    onemonospline
 end
 
+function splinelogspace(x::Vector, y::Vector; bc="error")
+    xp = x[x.>0]
+    yp = y[y.>0]
+    f = MonotoneSpline(log(xp), log(yp), bc=bc)
+    g(z::Number) = exp(f(log(z)))
+    @vectorize_1arg Number g
+    return g
+end
+
+
 function test1()
-    x = [0:9]
+    x = collect(0:9)
     y = [0,1,3,10,10,11,12,14,14,16]
-    f = monotonespline(x, y, bc="extrapolate")
+    f = MonotoneSpline(x, y, bc="extrapolate")
     f2 = Dierckx.Spline1D(float(x), float(y))
     a = linspace(-2,10,500)
     clf()
@@ -101,23 +124,14 @@ function test1()
     plot(a, f(a), "r", label="Monotone spline")
     plot(a, evaluate(f2,a), "b", label="Dierckx.Spline1D")
     legend(loc="lower right")
+    return f
 end
-
-function splinelogspace(x::Vector, y::Vector; bc="error")
-    xp = x[x.>0]
-    yp = y[y.>0]
-    f = monotonespline(log(xp), log(yp), bc=bc)
-    g(z::Number) = exp(f(log(z)))
-    @vectorize_1arg Number g
-    g
-end
-
 
 function test2()
     model(x) = 1000*((x./1000).^0.6 ) + x
-    x = linspace(0,8000,12)
+    x = collect(linspace(0,8000,12))
     y = model(x)
-    f = monotonespline(x, y, bc="extrapolate")
+    f = MonotoneSpline(x, y, bc="extrapolate")
     g = splinelogspace(x, y, bc="extrapolate")
     s(z) = evaluate(Dierckx.Spline1D(x, y), z)
     clf()
@@ -135,5 +149,3 @@ function test2()
     plot(a, model(a)-s(a), "g", label="Dierckx.Spline1D")
     legend()
 end
-
-# test1()

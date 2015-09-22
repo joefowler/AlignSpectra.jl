@@ -5,7 +5,7 @@ using Dierckx, Optim
 
 include("MonotoneSpline.jl")
 
-export monotonespline #?? Not sure what to export yet!
+export MonotoneSpline #?? Not sure what to export yet!
 
 """Find <npeaks> distinct peaks in a histogram with contents <h>.
 The algorithm is to label the fullest bin as the 1st peak, and penalize
@@ -254,7 +254,7 @@ function basicdtw(data1::Vector{Float32}, data2::Vector{Float32}) #c1::Vector{In
     end
 
     f = splinelogspace(bctr[pk1], float(u2[pk1]), bc="extrapolate")
-    #   f = monotonespline(bctr[pk1], float(u2[pk1]), bc="extrapolate")
+    #   f = MonotoneSpline(bctr[pk1], float(u2[pk1]), bc="extrapolate")
     plot(u1, f(u1), "k")
 
     data1e = f(float(data1))
