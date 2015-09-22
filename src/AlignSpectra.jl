@@ -20,7 +20,7 @@ function distinctpeaks(h::Vector, npeaks::Integer, distscale::Number)
     if npeaks > length(h)
         error("Histogram has only $(length(h)) bins: cannot find $(npeaks).")
     end
-    bin = [1:length(h)]
+    bin = collect(1:length(h))
     peaks = Int[indmax(h)]
     dist = abs(peaks[1] .- bin)
     penalty = dist ./ (distscale+dist)
@@ -36,15 +36,16 @@ end
 
 
 
+"""Replace a DTW path (p1,p2) with (x,y) where the x values are unique and
+the y values are an average over all those p2 where p1==x."""
 function uniquepath(p1::Vector, p2::Vector)
-    """Replace a DTW path (p1,p2) with (x,y) where the x values are unique and
-    the y values are an average over all the p2 having p1==x."""
+    @assert length(p1)==length(p2)
+
     minx = p1[1]
     x = unique(p1)
     sort!(x)
     y = zeros(Float64, length(x))
     n = zeros(Int, length(x))
-    @assert length(p1)==length(p2)
 
     bin = 1
     for i=1:length(p2)
@@ -58,12 +59,11 @@ function uniquepath(p1::Vector, p2::Vector)
 end
 
 
+"""Find the best cubic spline with knots at {k}, such that the Euclidean distance to all pairs
+of points {x_i, y_i} is minimized and such that the spline has "natural boundary conditions"
+(i.e., it has zero second derivative at the extreme knots, k[1] and k[end]).
+"""
 function findbestspline(x::Vector, y::Vector, k::Vector)
-    """
-    Find the best cubic spline with knots at {k}, such that the Euclidean distance to all pairs
-    of points {x_i, y_i} is minimized and such that the spline has "natural boundary conditions"
-    (i.e., it has zero second derivative at the k[1] and k[end]).
-    """
     k = sort(k)
     const m = length(k)
     const n = length(x)
@@ -109,7 +109,7 @@ function findbestspline(x::Vector, y::Vector, k::Vector)
             V[i,thisk] = A
             V[i,thisk+1] = B
 
-            # Above highest knot
+        # Above highest knot
         elseif xi>=k[m]
             thisk = m-1
             dr = k[end]-k[end-1]
@@ -118,7 +118,7 @@ function findbestspline(x::Vector, y::Vector, k::Vector)
             V[i,thisk] = A
             V[i,thisk+1] = B
 
-            # In the proper spline range
+        # In the proper spline range
         else
             thisk = findn(xi.>=k)[1][1]
             if thisk>=m || thisk<1
@@ -139,122 +139,49 @@ function findbestspline(x::Vector, y::Vector, k::Vector)
 end
 
 
+"""Find the best cubic spline according to the Dierckx.Spline1D function with
+weight vector w."""
 function findbestspline_numeric(x::Vector, y::Vector, w::Vector)
-    """
-    Find the best cubic spline according to Dierckx.
-    """
     Dierckx.Spline1D(x, y, w=w, bc="nearest", s=1.0)
 end
 
+
+"""Find the best cubic spline with knots at {k}, according to Dierckx.Spline1D with
+fixed knots.
+"""
 function findbestspline_knots(x::Vector, y::Vector, knots::Vector)
-    """
-    Find the best cubic spline with knots at {k}, such that the Euclidean distance to all pairs
-    of points {x_i, y_i} is minimized and such that the spline has "natural boundary conditions"
-    (i.e., it has zero second derivative at the k[1] and k[end]).
-    """
     @show knots
     Dierckx.Spline1D(x, y, knots, bc="nearest", k=3)
 end
 
-function basicdtw_v1(data1::Vector{Float32}, data2::Vector{Float32}) #c1::Vector{Int}, c2::Vector{Int})
-    clf()
-    subplot(321)
-    c1,b,_=plt.hist(data1, 8000, [0,8000], histtype="step", color="r", normed=true)
-    db = 0.5*(b[2]-b[1])
-    pk1 = distinctpeaks(c1,8)
-    for p in pk1
-        plt.plot(b[p]+db, c1[p], "ro")
-    end
-    pk1 =  sort(vcat([2], pk1, [length(c1)-1]))
-
-    c2,_,_=plt.hist(data2, 8000, [0,8000], histtype="step", color="k", normed=true)
-
-    dist,p1,p2 = DynamicTimeWarp.fastdtw(c1, c2, 20)
-    subplot(322)
-    u1,u2 = uniquepath(p1,p2)
-    plot(u1,u2,"g")
-    for p in pk1
-        plt.plot(b[p]+db, u2[p], "ro")
-    end
-
-    #   sval = findbestspline(u1, u2, pk1)
-    #   @show pk1
-    #   @show sval
-    #   for i=1:length(sval)
-    #     plot(pk1[i], sval[i], "or")
-    #   end
-    #   weights = c2/float(sum(c2))*100
-    #   weights[1] = weights[end] = 100
-    #   f = findbestspline_numeric(u1, u2, weights
-    #   knots = float(pk1)
-    knots=float([2:250:length(c1)])
-    f = findbestspline_knots(u1, u2, knots)
-    plot(u1, evaluate(f, u1), "k")
-
-    data1e = evaluate(f, convert(Array{Float64,1},data1))
-    subplot(323)
-    c1,b,_=plt.hist(data1e, 8000, [0,8000], histtype="step", color="r", normed=true)
-    c2,_,_=plt.hist(data2, 8000, [0,8000], histtype="step", color="k", normed=true)
-    dist,p1,p2 = DynamicTimeWarp.fastdtw(c1, c2, 10)
-    subplot(324)
-    u1,u2 = uniquepath(p1,p2)
-    plot(u1,u2,"g")
-    knots=float([2:250:length(c1)])
-    f2 = findbestspline_knots(u1, u2, knots)
-    plot(u1, evaluate(f2, u1), "k")
-
-    data1f = evaluate(f2, float(data1e))
-    subplot(313)
-    c1,b,_=plt.hist(data1f, 8000, [0,8000], histtype="step", color="r", normed=true)
-    c2,_,_=plt.hist(data2, 8000, [0,8000], histtype="step", color="k", normed=true)
-end
 
 
-function showentropy(x::Vector, y::Vector)
-    clf();
-    subplot(211)
-    c1,b,_=plt.hist(x, 8000, [0,8000], histtype="step", color="r", normed=true)
-    c2,_,_=plt.hist(y, 8000, [0,8000], histtype="step", color="k", normed=true)
-    subplot(212)
-    e1 = -log2(c1+1e-6).*c1
-    e2 = -log2(c2+1e-6).*c2
-    plot(b[2:end], e1, "r", b[2:end],e2,"k")
-end
 
-function pdistfunction(M::Integer, N::Integer)
-    function dist(i, j)
-        if i+j == 0; return 0; end
-        mu = float(i+j)/float(M+N)
-        return (i-j+mu*(N-M))^2 / float(i+j)
-    end
-    return dist
-end
 
 function basicdtw(data1::Vector{Float32}, data2::Vector{Float32}) #c1::Vector{Int}, c2::Vector{Int})
     clf()
     subplot(321)
     c1,b,_=plt.hist(data1, 8000, [0,8000], histtype="step", color="r", normed=true)
     db = 0.5*(b[2]-b[1])
-    bctr = b[1:end-1]+db
+    binctrs = b[1:end-1]+db
     pk1 = distinctpeaks(c1, 8, 100.)
     for p in pk1
-        plt.plot(bctr[p], c1[p], "ro")
+        plt.plot(binctrs[p], c1[p], "ro")
     end
 
     c2,_,_=plt.hist(data2, 8000, [0,8000], histtype="step", color="k", normed=true)
 
     d1d2_distance = DynamicTimeWarp.Distance.poissonpenalty(length(data1), length(data2))
-    #   d1d2_distance =
     dist,p1,p2 = DynamicTimeWarp.fastdtw(c1, c2, 10, d1d2_distance)
     subplot(322)
-    u1,u2 = uniquepath(bctr[p1],bctr[p2])
+    u1,u2 = uniquepath(binctrs[p1],binctrs[p2])
     plot(u1,u2,"g")
     for p in pk1
-        plt.plot(bctr[p], u2[p], "ro")
+        plt.plot(binctrs[p], u2[p], "ro")
     end
 
-    f = splinelogspace(bctr[pk1], float(u2[pk1]), bc="extrapolate")
-    #   f = MonotoneSpline(bctr[pk1], float(u2[pk1]), bc="extrapolate")
+    f = splinelogspace(binctrs[pk1], float(u2[pk1]), bc="extrapolate")
+    #   f = MonotoneSpline(binctrs[pk1], float(u2[pk1]), bc="extrapolate")
     plot(u1, f(u1), "k")
 
     data1e = f(float(data1))
@@ -263,15 +190,15 @@ function basicdtw(data1::Vector{Float32}, data2::Vector{Float32}) #c1::Vector{In
     c2,_,_=plt.hist(data2, 8000, [0,8000], histtype="step", color="k", normed=true)
     dist,p1,p2 = DynamicTimeWarp.fastdtw(c1, c2, 20, d1d2_distance)
     subplot(324)
-    u1,u2 = uniquepath(bctr[p1],bctr[p2])
+    u1,u2 = uniquepath(binctrs[p1],binctrs[p2])
     plot(u1,u2,"g")
     pk1 = distinctpeaks(c1, 8, 100.)
     for p in pk1
-        plt.plot(bctr[p], u2[p], "ro")
+        plt.plot(binctrs[p], u2[p], "ro")
     end
 
-    #   @show pk1, bctr[pk1], u2[pk1]
-    g = splinelogspace(bctr[pk1], float(u2[pk1]), bc="extrapolate")
+    #   @show pk1, binctrs[pk1], u2[pk1]
+    g = splinelogspace(binctrs[pk1], float(u2[pk1]), bc="extrapolate")
     plot(u1, g(u1), "k")
 
     data1f = g(float(data1e))
@@ -300,16 +227,17 @@ function one_dtw_step(data1::Vector, data2::Vector)
     b,c2=Base.hist(data2, 0:2:8000)
 
     db = b[2]-b[1]
-    bctr = b[1:end-1]+db*0.5
+    binctrs = b[1:end-1]+db*0.5
     pk1 = distinctpeaks(c1, 9, 100.)
 
     d1d2_distance = DynamicTimeWarp.Distance.poissonpenalty(length(data1), length(data2))
     dist,p1,p2 = DynamicTimeWarp.fastdtw(c1, c2, 20, d1d2_distance)
     @printf("The Poisson DTW path distance: %f\n", dist)
-    u1,u2 = uniquepath(bctr[p1],bctr[p2])
-    return bctr[pk1], float(u2[pk1])
+    u1,u2 = uniquepath(binctrs[p1],binctrs[p2])
+    return binctrs[pk1], float(u2[pk1])
 end
 
+"""This is still a work in progress. For now, just skip it."""
 function polish!(consensus::Vector, allknots, allcurves, data, i::Int=1)
     d = data[i];
     knotr, knots = allknots[i]

@@ -109,6 +109,13 @@ function splinelogspace(x::Vector, y::Vector; bc="error")
     f = MonotoneSpline(log(xp), log(yp), bc=bc)
     g(z::Number) = exp(f(log(z)))
     @vectorize_1arg Number g
+    function g(s::Symbol)
+        if s == :x
+            return xp
+        elseif s == :y
+            return yp
+        end
+    end
     return g
 end
 
