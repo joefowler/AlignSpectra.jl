@@ -5,7 +5,7 @@ using Dierckx, Optim
 
 include("MonotoneSpline.jl")
 
-export MonotoneSpline, MonotoneSplineLogLog
+export MonotoneSpline, MonotoneSplineLogLog, matchspectra
 
 """Find <npeaks> distinct peaks in a histogram with contents <h>.
 The algorithm is to label the fullest bin as the 1st peak, and penalize
@@ -284,6 +284,76 @@ function xpolish!(consensus::Vector, knotr, knots, curve, data)
     plot(consensus, "c")
     return consensus
 end
+
+
+function compose_splinelog(c1, c2)
+    x = c1.x
+    y = c2(c1(x))
+    AlignSpectra.MonotoneSplineLogLog(x, y; bc="extrapolate")
+end
+
+
+function matchspectra{T<:Number}(values::Vector{Vector{T}})
+    N = length(values)
+    if N == 1
+        return [AlignSpectra.MonotoneSplineLogLog([1,10], [1,10];
+                bc="extrapolate")], values[1]
+    end
+
+    if N == 2
+        n1, n2 = length(values[1]), length(values[2])
+        n1 = min(n1, 50000)
+        n2 = min(n2, 50000)
+        r,s = one_dtw_step(values[1][1:n1], values[2][1:n2])
+        middle = (r*n1 .+ s*n2) / (n1+n2)
+        f1 = AlignSpectra.MonotoneSplineLogLog(r, middle; bc="extrapolate")
+        f2 = AlignSpectra.MonotoneSplineLogLog(s, middle; bc="extrapolate")
+        combined = Float32[]
+        append!(combined, f1(values[1]))
+        append!(combined, f2(values[2]))
+        return [f1,f2], combined
+    end
+
+    if N == 3
+        curvesA, combinedA = matchspectra(values[1:2])
+        input = Vector{T}[]
+        push!(input, combinedA)
+        push!(input, values[3])
+        curvesB, combined = matchspectra(input)
+        f1 = compose_splinelog(curvesA[1], curvesB[1])
+        f2 = compose_splinelog(curvesA[2], curvesB[1])
+        f3 = curvesB[2]
+        return [f1,f2,f3], combined
+    end
+
+    # Break the values vector up into equal-size groups (extra in N2 if N is odd)
+    N1 = div(N,2)
+    N2 = N - N1
+
+    @assert N > 3
+    values1 = values[1:N1]
+    values2 = values[N1+1:end]
+
+    curves1, combined1 = matchspectra(values1)
+    curves2, combined2 = matchspectra(values2)
+
+    @show N, typeof(combined1), eltype(combined1)
+    @show N2, typeof(combined2), eltype(combined2)
+    inputs = Vector{T}[]
+    push!(inputs, combined1)
+    push!(inputs, combined2)
+    curves3, combined3 = matchspectra(inputs)
+    finalcurves = []
+    for c in curves1
+        push!(finalcurves, compose_splinelog(c, curves3[1]))
+    end
+    for c in curves2
+        push!(finalcurves, compose_splinelog(c, curves3[2]))
+    end
+
+    finalcurves, combined3
+end
+
 
 
 end # module
