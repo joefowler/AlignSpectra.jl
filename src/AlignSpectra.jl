@@ -5,7 +5,8 @@ using Dierckx, Optim
 
 include("MonotoneSpline.jl")
 
-export MonotoneSpline, MonotoneSplineLogLog, matchspectra
+export MonotoneSpline, MonotoneSplineLogLog, compose_spline,
+    compose_splinelog, matchspectra
 
 """Find <npeaks> distinct peaks in a histogram with contents <h>.
 The algorithm is to label the fullest bin as the 1st peak, and penalize
@@ -221,105 +222,84 @@ histogram, and p2 is the location of these same peaks in data2, as
 determined by FastDTW.
 
 Uses a fixed histogram binning of 0:2:8000 at this point."""
-function one_dtw_step(data1::Vector, data2::Vector)
+function one_dtw_step(hist1::Vector, hist2::Vector, binctrs::Vector)
 
-    b,c1=Base.hist(data1, 0:2:8000)
-    b,c2=Base.hist(data2, 0:2:8000)
+    pk1 = distinctpeaks(hist1, 8, 100.)
 
-    db = b[2]-b[1]
-    binctrs = b[1:end-1]+db*0.5
-    pk1 = distinctpeaks(c1, 9, 100.)
-
-    d1d2_distance = DynamicTimeWarp.Distance.poissonpenalty(length(data1), length(data2))
-    dist,p1,p2 = DynamicTimeWarp.fastdtw(c1, c2, 20, d1d2_distance)
+    d1d2_distance = DynamicTimeWarp.Distance.poissonpenalty(sum(hist1), sum(hist2))
+    dist,p1,p2 = DynamicTimeWarp.fastdtw(hist1, hist2, 20, d1d2_distance)
     @printf("The Poisson DTW path distance: %f\n", dist)
     u1,u2 = uniquepath(binctrs[p1],binctrs[p2])
     return binctrs[pk1], float(u2[pk1])
 end
 
-"""This is still a work in progress. For now, just skip it."""
-function xpolish!(consensus::Vector, knotr, knots, curve, data)
-    f = curve
-    _,h2 = Base.hist(f(data), 0:0.5:8000)
-    println(knots)
-    consensus = Base.hist(consensus, 0:0.5:8000)
-    consensus = consensus .- h2
-
-    mu = (float(consensus)+0.1)
-    mu = mu*length(data)/sum(mu)
-    logmu = log(mu)
-    summu = sum(mu)
-    clf(); plot(consensus, "k", label="Consensus")
-    plot(h2, "b", label="Before polish")
-    for knum = 1:length(knotr)
-        kchoices = knots[knum] + [-2,-1.4,-1,-.75,-.5,-.25,-.1,0,.1,.25,.5,.75,1,1.4,2]
-        # kchoices = [knots[knum]-1.4:.2:knots[knum]+1.4]
-        cost = similar(kchoices)
-        for (ik,k) = enumerate(kchoices)
-            trial = copy(knots)
-            trial[knum]=k
-            f = MonotoneSplineLogLog(knotr, trial, bc="extrapolate")
-            d2 = f(d)
-            _,ccc=Base.hist(d2, 0:0.5:8000)
-            loglike =  -summu
-            for (j,lm) in zip(ccc,logmu)
-                if j>0; loglike += j*(1.0+lm-log(j)); end
-            end
-            plot(2*k, -loglike, "ob")
-            cost[ik] = -loglike
-        end
-        best_s = kchoices[findmin(cost)[2]]
-        @show knum, best_s-knots[knum]
-        knots[knum] = best_s
-    end
-    f = MonotoneSplineLogLog(knotr, knots, bc="extrapolate")
-    println(knots)
-    _,h3 = Base.hist(f(d), 0:0.5:8000)
-    plot(h3, "r", label="After polish")
-    legend(loc="best")
-    # Save results as an update
-    allcurves[i] = f
-    allknots[i] = (knotr, knots)
-    consensus .+= h3
-    plot(consensus, "c")
-    return consensus
-end
 
 
-function compose_splinelog(c1, c2)
-    x = c1.x
-    y = c2(c1(x))
-    AlignSpectra.MonotoneSplineLogLog(x, y; bc="extrapolate")
-end
-
-
-function matchspectra{T<:Number}(values::Vector{Vector{T}})
-    N = length(values)
+function matchspectra{T<:Number}(histograms::Matrix{T}; histrange::Range=0:0.5:8000)
+    N = size(histograms)[2]
     if N == 1
-        return [AlignSpectra.MonotoneSplineLogLog([1,10], [1,10];
-                bc="extrapolate")], values[1]
+        dummyspline = AlignSpectra.MonotoneSplineLogLog([1,10], [1,10]; bc="extrapolate")
+        return [dummyspline], histograms[:,1]
     end
 
     if N == 2
-        n1, n2 = length(values[1]), length(values[2])
-        n1 = min(n1, 50000)
-        n2 = min(n2, 50000)
-        r,s = one_dtw_step(values[1][1:n1], values[2][1:n2])
+        binedges = collect(histrange)
+        db = binedges[2]-binedges[1]
+        binctrs = binedges[1:end-1]+db*0.5
+        Nbins = length(binctrs)
+
+        n1, n2 = sum(histograms[:,1]), sum(histograms[:,2])
+        r,s = one_dtw_step(histograms[:,1], histograms[:,2], binctrs)
         middle = (r*n1 .+ s*n2) / (n1+n2)
         f1 = AlignSpectra.MonotoneSplineLogLog(r, middle; bc="extrapolate")
         f2 = AlignSpectra.MonotoneSplineLogLog(s, middle; bc="extrapolate")
-        combined = Float32[]
-        append!(combined, f1(values[1]))
-        append!(combined, f2(values[2]))
+
+        # Now convert histograms to equivalent values, transform them, and
+        # re-histogram the result. Approximate this by random sampling for
+        # allowed values in the bin (for bins with <10 samples), or by evenly
+        # spreading out the values to
+        combined = zeros(histograms[:,1])
+        for i = 1:length(combined)
+            nh = histograms[i,1]
+            if nh > 0
+                Nval = div(nh, 8) + zeros(Int, 8)
+                for j=1:nh-sum(Nval)
+                    Nval[rand(1:8)] += 1
+                end
+                @assert sum(Nval) == nh
+                values = linspace(binedges[i]+db/16., binedges[i+1]-db/16, 8)
+                fvalues = f1(values)
+                for (n, fv) in zip(Nval, fvalues)
+                    bnum = round(Int, div(fv-binedges[1], db))+1
+                    if bnum < Nbins && bnum > 0
+                        combined[bnum] += n
+                    end
+                end
+            end
+
+            nh = histograms[i,2]
+            if nh > 0
+                Nval = div(nh, 8) + zeros(Int, 8)
+                for j=1:nh-sum(Nval)
+                    Nval[rand(1:8)] += 1
+                end
+                values = linspace(binedges[i]+db/16., binedges[i+1]-db/16, 8)
+                fvalues = f2(values)
+                for (n, fv) in zip(Nval, fvalues)
+                    bnum = round(Int, div(fv-binedges[1], db))+1
+                    if bnum < Nbins && bnum > 0
+                        combined[bnum] += n
+                    end
+                end
+            end
+        end
         return [f1,f2], combined
     end
 
     if N == 3
-        curvesA, combinedA = matchspectra(values[1:2])
-        input = Vector{T}[]
-        push!(input, combinedA)
-        push!(input, values[3])
-        curvesB, combined = matchspectra(input)
+        curvesA, combinedA = matchspectra(histograms[:,1:2]; histrange=histrange)
+        input = hcat(combinedA, histograms[:,3])
+        curvesB, combined = matchspectra(input; histrange=histrange)
         f1 = compose_splinelog(curvesA[1], curvesB[1])
         f2 = compose_splinelog(curvesA[2], curvesB[1])
         f3 = curvesB[2]
@@ -331,18 +311,16 @@ function matchspectra{T<:Number}(values::Vector{Vector{T}})
     N2 = N - N1
 
     @assert N > 3
-    values1 = values[1:N1]
-    values2 = values[N1+1:end]
+    histograms1 = histograms[:,1:N1]
+    histograms2 = histograms[:,N1+1:end]
 
-    curves1, combined1 = matchspectra(values1)
-    curves2, combined2 = matchspectra(values2)
+    curves1, combined1 = matchspectra(histograms1; histrange=histrange)
+    curves2, combined2 = matchspectra(histograms2; histrange=histrange)
 
     @show N, typeof(combined1), eltype(combined1)
     @show N2, typeof(combined2), eltype(combined2)
-    inputs = Vector{T}[]
-    push!(inputs, combined1)
-    push!(inputs, combined2)
-    curves3, combined3 = matchspectra(inputs)
+    inputs = hcat(combined1, combined2)
+    curves3, combined3 = matchspectra(inputs; histrange=histrange)
     finalcurves = []
     for c in curves1
         push!(finalcurves, compose_splinelog(c, curves3[1]))

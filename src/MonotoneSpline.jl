@@ -75,6 +75,7 @@ end
 function Base.call(spl::MonotoneSpline, z::Number)
     if z < spl.x[1]
         if spl.bc=="error"
+            println("Oh no! 1 spl.bc=$(spl.bc)")
             throw(ArgumentError)
         elseif spl.bc=="constant"
             return spl.y[1]
@@ -83,6 +84,7 @@ function Base.call(spl::MonotoneSpline, z::Number)
         end
     elseif z > spl.x[end]
         if spl.bc=="error"
+            println("Oh no! 2 spl.bc=$(spl.bc)")
             throw(ArgumentError)
         elseif spl.bc=="constant"
             return spl.y[end]
@@ -114,6 +116,22 @@ end
 
 Base.call(spl::MonotoneSplineLogLog, z::Number) = exp(spl.ms(log(z)))
 Base.call(spl::MonotoneSplineLogLog, z::AbstractArray) = map(spl, z)
+
+"""Return the MonotoneSplineLogLog that has the same knots as c1 but passes
+through the control points that result from applying c2 on top of c1."""
+function compose_splinelog(c1::MonotoneSplineLogLog, c2::MonotoneSplineLogLog)
+    x = c1.x
+    y = c2(c1(x))
+    MonotoneSplineLogLog(x, y; bc="extrapolate")
+end
+
+"""Return the MonotoneSpline that has the same knots as c1 but passes
+through the control points that result from applying c2 on top of c1."""
+function compose_spline(c1::MonotoneSpline, c2::MonotoneSpline)
+    x = c1.x
+    y = c2(c1(x))
+    MonotoneSpline(x, y; bc="extrapolate")
+end
 
 
 function test1()
